@@ -1,12 +1,12 @@
 package com.acjay.lib
 
 import akka.actor.ActorRef
-import akka.http.scaladsl.model.ws.{Message}
+import akka.http.scaladsl.model.ws.{BinaryMessage, Message, TextMessage}
 import akka.stream.scaladsl.{Flow, Source}
-import akka.stream.{KillSwitch, KillSwitches, OverflowStrategy}
+import akka.stream.{ActorMaterializer, KillSwitch, KillSwitches, OverflowStrategy}
 import scala.concurrent.{ExecutionContextExecutor, Future}
 
-trait WebSocketsHandler {
+trait WebSocketScaffold {
   /** Supertype of incoming commands from the client. */
   type Cmd
 
@@ -56,7 +56,7 @@ trait WebSocketsHandler {
   def setState(state: Sess): Future[Unit]
   def deserialize(command: Message): Future[Option[Cmd]]
   def processCommand(command: Cmd, state: Sess): Future[Res]
-  def processAction(action: Action, state: Sess, connectionControl: WebSockets.ConnectionControl): Future[(Out, Sess)]
+  def processAction(action: Action, state: Sess, connectionControl: WebSocketScaffold.ConnectionControl): Future[(Out, Sess)]
   def serialize(output: Out): Future[Option[Message]]
 
   // Internal state. These are constants, practically speaking, because they 
@@ -64,7 +64,7 @@ trait WebSocketsHandler {
   private var pushMessageReceiver: ActorRef = null
   private var killSwitch: KillSwitch = null
 
-  final private def connectionControl = WebSockets.ConnectionControl(
+  final protected def connectionControl = WebSocketScaffold.ConnectionControl(
     pushMessageReceiver,
     killSwitch
   )
@@ -111,7 +111,7 @@ trait WebSocketsHandler {
     .mapConcat(_.toList)
 }
 
-object WebSockets {
+object WebSocketScaffold {
   case class ConnectionControl(
     pushMessageReceiver: ActorRef,
     killSwitch: KillSwitch
@@ -119,7 +119,7 @@ object WebSockets {
 
   class TextMesageDeserializationException extends Exception("This socket only accepts text messages.")
 
-  def textMessageToString(message: Message): Future[String] = {
+  def textMessageToString(message: Message)(implicit mat: ActorMaterializer): Future[String] = {
     message match {
       case m: TextMessage =>
         m.textStream
@@ -127,8 +127,6 @@ object WebSockets {
           .runFold("")(_ ++ _)
       case _: BinaryMessage =>
         Future.failed(new TextMesageDeserializationException)
- 
-  }
-
-  
+    }
+  }  
 }

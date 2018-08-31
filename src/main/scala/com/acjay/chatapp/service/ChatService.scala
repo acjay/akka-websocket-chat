@@ -1,32 +1,41 @@
+package com.acjay.chatapp.service
+
+import scala.concurrent.Future
+
 case class ChatService(
-  publishEvent: Event => Unit
+  publishEvent: ChatService.Event => Unit
 ) {
   import ChatService._
 
-  var data = Seq[Room].empty
+  var data = Seq.empty[Room]
+
+  protected def membersForRoom(roomName: String): Seq[String] = data
+    .find(_.name == roomName)
+    .map(_.users)
+    .getOrElse(Seq.empty)
 
   protected def removeUserFromRoom(user: String, limitedToRoomName: Option[String]) = {
     data = data
       .map { room =>
-        if (limitedToRoomName.forall(_ == room.name) && room.contains(username)) {
-          publishEvent(UserLeftRoom(username, room))
-          room.copy(users = users.filterNot(_ == username))
+        if (limitedToRoomName.forall(_ == room.name) && room.users.contains(user)) {
+          publishEvent(UserLeftRoom(user, room.name, membersForRoom(room.name)))
+          room.copy(users = room.users.filterNot(_ == user))
         } else {
           room
         }
       }
-      .filterNot(_.users.empty)
+      .filterNot(_.users.isEmpty)
   }
 
   def joinRoom(roomName: String, user: String): Future[Unit] = {
     val newRoom = data
       .find(_.name == roomName)
       .map(room => room.copy(users = room.users :+ user))
-      .getOrElse(Room(roomName, Seq(user), Seq.empty))
+      .getOrElse(Room(roomName, Seq(user)))
     
     data = data.filterNot(_.name == roomName) :+ newRoom
 
-    publishEvent(UserJoinedRoom(user, roomName))
+    publishEvent(UserJoinedRoom(user, roomName, membersForRoom(roomName)))
 
     Future.successful(())
   }
@@ -36,13 +45,13 @@ case class ChatService(
     Future.successful(())
   }
 
-  def endSession(username: String): Future[Unit] = {
+  def endSession(user: String): Future[Unit] = {
     removeUserFromRoom(user, None)
     Future.successful(())
   }
 
   def newMessage(roomName: String, user: String, message: String): Future[Unit] = {
-    publishEvent(NewMessaage(roomName, user, message))
+    publishEvent(NewMessage(roomName, user, message, membersForRoom(roomName)))
     Future.successful(())
   }
 }
@@ -56,5 +65,5 @@ object ChatService {
   sealed trait Event { def audience: Seq[String] }
   case class UserLeftRoom(user: String, room: String, audience: Seq[String]) extends Event
   case class UserJoinedRoom(user: String, room: String, audience: Seq[String]) extends Event
-  case class NewMessaage(room: String, user: String, message: String, audience: Seq[String]) extends Event
+  case class NewMessage(room: String, user: String, message: String, audience: Seq[String]) extends Event
 }

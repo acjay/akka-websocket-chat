@@ -1,4 +1,4 @@
-package com.acjay
+package com.acjay.chatapp
 
 import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
@@ -6,7 +6,7 @@ import akka.http.scaladsl.model._
 import akka.http.scaladsl.server.Directives._
 import akka.stream.ActorMaterializer
 import scala.io.StdIn
-import com.acjay.service.{ ChatService, PubSubService, UserService }
+import com.acjay.chatapp.service.{ ChatService, PubSubService, UserService }
 
 object WebServer {
   def main(args: Array[String]) {
@@ -23,7 +23,7 @@ object WebServer {
 
     val route =
       path("socket") {
-        handleWebSocket(ChatWebSocket(
+        handleWebSocketMessages(ChatWebSocket(
           userService,
           chatService,
           pubSub.subscribeForEvents,
