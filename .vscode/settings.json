@@ -1,0 +1,6 @@
+{
+  "files.exclude": {
+    "project/target/": "explorerExcludedFiles",
+    "target/": "explorerExcludedFiles"
+  }
+}

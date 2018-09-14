@@ -3,7 +3,7 @@ package com.acjay.chatapp
 import akka.actor.{ActorRef, ActorSystem}
 import akka.http.scaladsl.model.ws.{Message, TextMessage}
 import akka.stream.{ActorMaterializer, OverflowStrategy}
-import com.acjay.lib.WebSocketScaffold
+import com.acjay.lib.CommandAndPushWebSocketHandler
 import com.acjay.chatapp.service.{ChatService, UserService}
 import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.{ExecutionContextExecutor, Future}
@@ -18,7 +18,7 @@ case class ChatWebSocket(
   system: ActorSystem,
   mat: ActorMaterializer,
   val ec: ExecutionContextExecutor
-) extends WebSocketScaffold {
+) extends CommandAndPushWebSocketHandler {
   import ChatWebSocket._
   import ChatService._
   import UserService._
@@ -37,7 +37,7 @@ case class ChatWebSocket(
   def setState(newState: ConnectionState) = Future.successful(s.set(newState))
 
   def deserialize(request: Message): Future[Option[ChatWebSocket.ClientCommand]] = {
-    WebSocketScaffold.textMessageToString(request).map(ClientCommand.fromString)
+    CommandAndPushWebSocketHandler.textMessageToString(request).map(ClientCommand.fromString)
   }
 
   def processCommand(command: ClientCommand, state: Sess): Future[ClientCommandResult] = state match {
@@ -83,7 +83,7 @@ case class ChatWebSocket(
   def processAction(
     action: Action, 
     state: Sess, 
-    connectionControl: WebSocketScaffold.ConnectionControl
+    connectionControl: CommandAndPushWebSocketHandler.ConnectionControl
   ): Future[(Out, Sess)] = action match {
     case Starting =>
       Future.successful((LoginChallenge, state))
