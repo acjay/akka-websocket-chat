@@ -14,7 +14,9 @@ WebSocket is different. The client requests a connection, but once established, 
 
 For this reason, WebSocket server libraries tend to be very sparse. You often send messages imperatively and register a callback that is invoked for messages received. Akka HTTP models it a bit differently, as we'll see below, but it's just as vaguely specified.
 
-Eventually, I'm going to zoom in on a common category of use cases of WebSockets, instead of the full generality. Often, WebSockets are used to model a combination of the client command -> server response paradigm with push messages from a server. They also often have implicit or explict state over the life of the connection. This could include protocol state, like authentication status, or application state, like mutable connection options. HTTP has evolved mechanisms and patterns for all of these things, through features like headers, cookies, and server-sent events (SSE). WebSocket doesn't standardize these protocol concerns in any way, so you have to build this yourself. We'll walk through my attempt to build a basic framework for a "command and push" WebSocket server, and use it to power a chat app. But first
+Eventually, I'm going to zoom in on a common category of use cases of WebSockets, instead of the full generality. Often, WebSockets are used to model a combination of the client command -> server response paradigm with push messages from a server. They also often have implicit or explict state over the life of the connection. This could include protocol state, like authentication status, or application state, like mutable connection options. HTTP has evolved mechanisms and patterns for all of these things, through features like headers, cookies, and server-sent events (SSE). WebSocket doesn't standardize these protocol concerns in any way, so you have to build this yourself. We'll walk through my attempt to build a basic framework for a "command and push" WebSocket server, and use it to power a chat app.
+
+But first, we have to talk about the server framework I'll be using.
 
 ## Akka HTTP's WebSocket support
 
@@ -32,7 +34,15 @@ In fact, you can create a `Flow` [from a separate `Source` and `Sink`](<https://
 
 The last thing I want to say about `Flow`s is that you don't really call them like you call a function. Instead, you _materialize_ them in connection with a `Source` and `Sink` that provide their input and consume their output. The don't evaluate in-place in the program. They run until their `Source` completes or their `Sink` cancels. This fully connected system is called a `RunnableGraph`. In the case of Akka HTTP, the framework takes care of this materialization part for you, so all you have to do is design a `Flow`. It's really quite elegant!
 
-## Choosing the right Akka Streams abstraction
+### WebSockets in Akka HTTP
+
+To serve WebSockets in Akka HTTP, you use a directive called `handleWebSocketMessages`. It accepts a `Flow[Message, Message, NotUsed]`, which encompasses the entirety of your WebSocket server logic. Pretty unconstrained, but that's because WebSocket is a pretty unconstrained protocol. From the description of `Flow` above, you might be able to see how it's a perfect abstraction.
+
+`Message` is just a blob of text or binary data. Don't be fooled by the fact that it appears on both the input and output. The blobs in don't necessarily have to correlate with the blobs out. That's perfect because we can produce blobs out in response to events outside of the WebSocket system, and blobs in need not produce any blobs out.
+
+All interpretation and processing of blobs is left to the developer and depends on how you build up your `Flow`. For that, we use the incredibly powerful Akka Streams API.
+
+### Choosing the right Akka Streams abstraction
 
 Akka Streams provides 3 ways I know of to build a our `Flow`. At the lowest level, you can make a [custom graph stage](https://doc.akka.io/docs/akka/2.5.14/stream/stream-customize.html). This seems pretty technical, and I've never tried it. The docs pretty much tell you that you probably don't need to.
 
@@ -41,21 +51,5 @@ Next, there are two separate DSLs. This is where I got confused, and I think a l
 And then, there's another DSL. A simpler DSL. I don't know if the manual explicitly gives it a name, but [the API docs](https://doc.akka.io/api/akka/2.5.12/akka/stream/scaladsl/) call it the "flow DSL". It's almost completely free of boilerplate. The only catch is that it only directly supports the building of linear stream processes, without fancy features like feedback. But as it turns out, this is exactly the level of power we need to build the sort of `Flow` Akka HTTP requires for our WebSocket service.
 
 With _all of that_ out of the way, we can finally get around to building something. Sorry it took so long, but take it from me, this is way quicker than reading the whole manual.
-
-## Separate the transport logic from the business logic
-
-As alluded to above, most Akka Streams tutorials use unnecessarily low-level features. But the second pitfall I see is deep coupling of the business logic of the application with the structure of the server. In my experience, this isn't always easy to do, but it pays dividends as you maintain your system.
-
-One of my key strategies is to figure out how to express my business logic in the form of _async functions over ADTs_. In other words, I don't want to be dealing with `Flow`s, or any other complex library structure when I write my logic. That's going to be much more difficult to reason about and test. This means I need to write an adapter from Akka HTTP's `Flow`-based API to something I can plug simple functions into.
-
-For this project, I wrote an adapter called `WebSocketsHandler`. It builds a scaffold for the sort of handler I suspect many people need. It supports:
-
-- Serialization between the wire format and Scala data structures.
-- Request-response trips from client to server, similar to HTTP or RPC.
-- Server-push messages to the client.
-- Session data storage, along with state changes in response to client commands or server events.
-- Termination of the connection.
-
-`CommandAndPushWebSocketHandler` is a `trait`, which
 
 <a target="1">**1**</a> Technically, it is `Function1[-T1, +R]`, which captures the variance constraints of the input and output parameters, but this isn't relevant here.
