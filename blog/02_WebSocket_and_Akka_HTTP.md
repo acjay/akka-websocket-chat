@@ -52,4 +52,4 @@ And then, there's another DSL. A simpler DSL. I don't know if the manual explici
 
 With _all of that_ out of the way, we can finally get around to building something. Sorry it took so long, but take it from me, this is way quicker than reading the whole manual.
 
-<a target="1">**1**</a> Technically, it is `Function1[-T1, +R]`, which captures the variance constraints of the input and output parameters, but this isn't relevant here.
+<a target="1"><sup>1</sup></a> Technically, it is `Function1[-T1, +R]`, which captures the variance constraints of the input and output parameters, but this isn't relevant here.

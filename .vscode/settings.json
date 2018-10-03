@@ -1,6 +1,8 @@
 {
   "files.exclude": {
     "project/target/": "explorerExcludedFiles",
-    "target/": "explorerExcludedFiles"
+    "target/": "explorerExcludedFiles",
+    "ensime-langserver.log": "explorerExcludedFiles",
+    "pc.stdout.log": "explorerExcludedFiles"
   }
 }

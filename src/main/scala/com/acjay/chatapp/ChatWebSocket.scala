@@ -29,15 +29,18 @@ case class ChatWebSocket(
   type Out = ClientUpdate
   type Sess = ConnectionState
 
-  val pushMessageBufferSize = 20
-  val pushMessageOverflowStrategy = OverflowStrategy.dropHead
+  val pushMessageSource = ActorPushMessageSource(20, OverflowStrategy.dropHead)
 
   val s = new AtomicReference(ConnectionState(user = None))
   def getState(): Future[ConnectionState] = Future.successful(s.get())
   def setState(newState: ConnectionState) = Future.successful(s.set(newState))
 
-  def deserialize(request: Message): Future[Option[ChatWebSocket.ClientCommand]] = {
-    CommandAndPushWebSocketHandler.textMessageToString(request).map(ClientCommand.fromString)
+  def deserialize(request: Message): Future[ChatWebSocket.ClientCommand] = {
+    CommandAndPushWebSocketHandler.textMessageToString(request)
+      .map { text => 
+        ClientCommand.fromString(text)
+          .getOrElse(ErroneousCommand(text))
+      }
   }
 
   def processCommand(command: ClientCommand, state: Sess): Future[ClientCommandResult] = state match {
@@ -77,6 +80,9 @@ case class ChatWebSocket(
           chatService.newMessage(roomName, user, message).map {
             case _ => Ok
           }
+
+        case ErroneousCommand(text) =>
+          Future.successful(ClientError(s"Unrecognized command: $text"))
       }
   } 
 
@@ -86,31 +92,31 @@ case class ChatWebSocket(
     connectionControl: CommandAndPushWebSocketHandler.ConnectionControl
   ): Future[(Out, Sess)] = action match {
     case Starting =>
-      Future.successful((LoginChallenge, state))
+      Future.successful((Some(LoginChallenge), state))
 
     case Responding(SetUser(user)) =>
-      subscribeForEvents(connectionControl.pushMessageReceiver, user)
-      Future.successful((Welcome, state.copy(user = Some(user))))
+      subscribeForEvents(connectionControl.pushMessageSource.actorRef, user)
+      Future.successful((Some(Welcome), state.copy(user = Some(user))))
 
     case Responding(ClientError(reason)) =>
-      Future.successful((Error(reason), state))
+      Future.successful((Some(Error(reason)), state))
 
     case Responding(Disconnect) =>
       connectionControl.killSwitch.shutdown()
-      Future.successful((Goodbye, state))
+      Future.successful((Some(Goodbye), state))
 
     case Telling(s: SomeoneJoinedRoom) if state.user.contains(s.person) =>
-      Future.successful((YouJoinedRoom(s.roomName), state))
+      Future.successful((Some(YouJoinedRoom(s.roomName)), state))
 
     case Telling(s: SomeoneLeftRoom) if state.user.contains(s.person) =>
-      Future.successful((YouLeftRoom(s.roomName), state))
+      Future.successful((Some(YouLeftRoom(s.roomName)), state))
 
     case Telling(update) =>
-      Future.successful((update, state))
+      Future.successful((Some(update), state))
 
     case Ending =>
       state.user.foreach(unsubscribeForEvents)
-      Future.successful((Noop, state))
+      Future.successful(None, state))
   }
 
   def serialize(output: ClientUpdate): Future[Option[Message]] = {
@@ -129,6 +135,7 @@ object ChatWebSocket {
   object LeaveRoom { val r = raw"Leave room: ([A-Za-z0-9]+)".r }
   case class Speak(roomName: String, message: String) extends ClientCommand
   object Speak { val r = raw"Speak: (.+)".r }
+  case class ErroneousCommand(text: String) extends ClientCommand
 
   sealed trait ClientCommandResult
   case class ClientError(reason: String) extends ClientCommandResult
@@ -151,32 +158,31 @@ object ChatWebSocket {
   case class SomeoneLeftRoom(roomName: String, person: String) extends PushNotification
   case class SomeoneSaid(roomName: String, speaker: String, message: String) extends PushNotification
   case class Error(reason: String) extends ClientUpdate
-  case object Noop extends ClientUpdate
   
   // Our serialization layer. Using plain strings to keep it simple.
 
   object ClientCommand {
-    def fromString(str: String): Option[ClientCommand] = str match {
-      case LogIn.r(username, password) => Some(LogIn(username, password))
-      case LogOut.r() => Some(LogOut)
-      case JoinRoom.r(roomName) => Some(JoinRoom(roomName))
-      case LeaveRoom.r(roomName) => Some(LeaveRoom(roomName))
-      case Speak.r(roomName, message) => Some(Speak(roomName, message))
+    def fromString(str: String): ClientCommand = str match {
+      case LogIn.r(username, password) => LogIn(username, password))
+      case LogOut.r() => LogOut
+      case JoinRoom.r(roomName) => JoinRoom(roomName)
+      case LeaveRoom.r(roomName) => LeaveRoom(roomName)
+      case Speak.r(roomName, message) => Speak(roomName, message)
+      case other => ErroneousCommand(other)
     }
   }
 
   object ClientUpdate {
-    def asString(c: ClientUpdate): Option[String] = c match {
-      case LoginChallenge => Some("Welcome to the server! Please log in.")
-      case Welcome => Some("Successfully logged in!")
-      case Goodbye => Some("See you next time.")
-      case YouJoinedRoom(roomName) => Some(s"You joined room $roomName.")
-      case YouLeftRoom(roomName) => Some(s"You left room $roomName.")
-      case SomeoneJoinedRoom(roomName, person) => Some(s"$person joined room $roomName.")
-      case SomeoneLeftRoom(roomName, person) => Some(s"$person left room $roomName.")
-      case SomeoneSaid(roomName, speaker, message) => Some(s"$roomName/$speaker: $message")
-      case Error(reason) => Some(s"Error: $reason")
-      case Noop => None
+    def asString(c: ClientUpdate): String = c match {
+      case LoginChallenge => "Welcome to the server! Please log in."
+      case Welcome => "Successfully logged in!"
+      case Goodbye => "See you next time."
+      case YouJoinedRoom(roomName) => s"You joined room $roomName."
+      case YouLeftRoom(roomName) => s"You left room $roomName."
+      case SomeoneJoinedRoom(roomName, person) => s"$person joined room $roomName."
+      case SomeoneLeftRoom(roomName, person) => s"$person left room $roomName."
+      case SomeoneSaid(roomName, speaker, message) => s"$roomName/$speaker: $message"
+      case Error(reason) => s"Error: $reason"
     }
   }
 
