@@ -4,7 +4,7 @@ Alright, now let's build something. As mentioned in the last piece:
 
 > I'm going to zoom in on a common category of use cases of WebSockets, instead of the full generality. Often, WebSockets are used to model a combination of the client command -> server response paradigm with push messages from a server. They also often have implicit or explict state over the life of the connection. This could include protocol state, like authentication status, or application state, like mutable connection options. HTTP has evolved mechanisms and patterns for all of these things, through features like headers, cookies, and server-sent events (SSE). WebSocket doesn't standardize these protocol concerns in any way, so you have to build this yourself. We'll walk through my attempt to build a basic framework for a "command and push" WebSocket server, and use it to power a chat app.
 
-So, we've got to pack all of these protocol concerns into the `Flow[Message, Message, NotUsed]` expected by Akka HTTP _and_ still actually implement business logic. And as great as Akka Streams is, one thing we _don't_ want to do is have to express our business logic using Akka Streams primitives. So we're going to need some sort of layered architecture.
+So, we've got to pack all of these protocol concerns into the `Flow[Message, Message, NotUsed]` expected by Akka HTTP _and_ still actually implement business logic. And as great as Akka Streams is, one thing we _don't_ want is to have to express our business logic using Akka Streams primitives. So we're going to need some sort of layered architecture.
 
 Sounds tricky, right? It's tricky enough that I never figured it out at my last job. But I think that starting from scratch and knowing what I know, I can pull it off and walk you through it.
 
@@ -71,7 +71,7 @@ Here we go!
 
    It returns an abstract type called `Res`, which represents the result of the command. Unlike an HTTP server, this might not _only_ be the data returned to the user. It should also contain any other metadata `processAction` needs to do things like session state transitions. It might also include diagnostic data for metrics. It's all up to the implementation.
 
-   At this point, the entire expression we've built up is of type `Flow[Message, (Action, Sess)]` <sup>[1](#1)</sup>.
+   At this point, the entire expression we've built up is of type `Flow[Message, (Action, Sess)]` <sup>[1](#footnote-1)</sup>.
 
 4. And now for my favorite part. So far, our `Flow` has just been a straight pipeline, and not that much different from a function. `merge` brings in another channel of data froma given `Source`. The result of `merge` is _just another `Flow`_.
 
@@ -79,7 +79,7 @@ Here we go!
 
    There are a number of different ways Akka HTTP let's us create a `Source` from some source of data. We shouldn't make that decision on behalf the application logic in the scaffold. So, we'll leave that abstract too (sensing a pattern here?), which is our `val pushMessageSource: PushMessageSource[Push]`. `PushMessageSource` is defined in our companion object as trait with one abstract method: `val source: Source[Push]`. Different `Source` constructors have different methods of introducing elements, so it's up to the application logic to decide which implmentation to use, and how to wire up data to the input for the source. A couple implementations are provided. `processAction` is provided access to the `PushMessageSource` via the `ConnectionControl` object, which bundles up references that give imperative control over the connection itself to the application logic.
 
-   At this point, we still have `Flow[Message, (Action, Sess)]`<sup>[2](#2)</sup>.
+   At this point, we still have `Flow[Message, (Action, Sess)]`<sup>[2](#footnote-2)</sup>.
 
 5. `map(Telling(_))` wraps any push messages that arrive so that the can be differentiated from other events in the system. `mapAsync(1)(withState)` augments this data with the session state to match the shape of data coming out of the command branch of the flow.
 
@@ -103,8 +103,10 @@ Here we go!
 
 11. Next, we call `.mapAsync(1)(serialize)`. As the mirror image to `deserialize`, `serialize` is an abstract method defined as `def serialize(output: Out): Future[Message]`. This means we've come full circle, and the final type of our long `handler` expression is `Flow[Message, Message]`. The types are the same as what we started with, but the behavior can be a whole lot more interesting. This scaffold provides some constraints, but the application logic that extends `CommandAndPushWebSocketHandler` has quite a bit of leeway in what it can model.
 
-> <a target="1"><sup>1</sup></a> To be exact, we now have a `Flow[Message, (CommandAndPushWebSocketHandler#Responding, Sess), NotUsed]`. We can think of the first parameter as being `CommandAndPushWebSocketHandler#Action` because that's a supertype of `CommandAndPushWebSocketHandler#Responding`.
+> <sup id="footnote-1">1</sup> To be exact, we now have a `Flow[Message, (CommandAndPushWebSocketHandler#Responding, Sess), NotUsed]`. We can think of the first parameter as being `CommandAndPushWebSocketHandler#Action` because that's a supertype of `CommandAndPushWebSocketHandler#Responding`.
 > 
-> The `CommandAndPushWebSocketHandler#` prefix on `Responding` indicates that the type `Responding` is _specific_ to every instance of `CommandAndPushWebSocketHandler`. This is an important detail because `Responding` has a property `commandResult: Res`, and `Res` is an abstract member of the trait. In other words, the `Responding` class of any two instances of `CommandAndPushWebSocketHandler` have no formal relationship to one another. They just happen to have the same parameter name. There are techniques to establish a formal relationship unifying all `Response` classes, but that is not helpful in our case, so we will not do this.
+> The `CommandAndPushWebSocketHandler#` prefix on `Responding` indicates that the type `Responding` is _specific_ to every instance of `CommandAndPushWebSocketHandler`. This is an important detail because `Responding` has a property `commandResult: Res`, and `Res` is an abstract member of the trait `CommandAndPushWebSocketHandler`. In other words, the `Responding` class of any two instances of `CommandAndPushWebSocketHandler` have no formal relationship to one another. They just _happen_ to look alike. 
+> 
+> There are ways to establish a formal relationship unifying all `Responsing` classes. This is not useful in our situation, so we will not do this.
 
-> <a target="2"><sup>2</sup></a> In reality, only now do we have `Flow[Message, (CommandAndPushWebSocketHandler#Action, Sess), NotUsed]`. The `Flow` in the previous step was `Flow[Message, (CommandAndPushWebSocketHandler#Responding, Sess), NotUsed]` and our `Source` we merged in is `Flow[Message, (CommandAndPushWebSocketHandler#Telling, Sess), NotUsed]`. `merge` results in the _least upper bound_ of these two types, which is `Flow[Message, (CommandAndPushWebSocketHandler#Action, Sess), NotUsed]`, because `Action` is the superclass of both `Responding` and `Telling`.
+> <sup id="footnote-2">2</sup> In reality, only now do we have `Flow[Message, (CommandAndPushWebSocketHandler#Action, Sess), NotUsed]`. The `Flow` in the previous step was `Flow[Message, (CommandAndPushWebSocketHandler#Responding, Sess), NotUsed]` and our `Source` we merged in is `Flow[Message, (CommandAndPushWebSocketHandler#Telling, Sess), NotUsed]`. `merge` results in the _least upper bound_ of these two types, which is `Flow[Message, (CommandAndPushWebSocketHandler#Action, Sess), NotUsed]`, because `Action` is the superclass of both `Responding` and `Telling`.
