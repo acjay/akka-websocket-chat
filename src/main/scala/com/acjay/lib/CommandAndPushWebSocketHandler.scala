@@ -1,12 +1,12 @@
 package com.acjay.lib
 
 import akka.actor.ActorRef
-import akka.http.scaladsl.model.ws.{Message}
+import akka.http.scaladsl.model.ws.{BinaryMessage, Message, TextMessage}
 import akka.stream.scaladsl.{Flow, Source, SourceQueue}
-import akka.stream.{KillSwitch, KillSwitches, OverflowStrategy}
+import akka.stream.{ActorMaterializer, KillSwitch, KillSwitches, OverflowStrategy}
 import scala.concurrent.{ExecutionContextExecutor, Future}
 
-trait CommandAndPushWebSocketHandler {
+trait CommandAndPushWebSocketHandler { self =>
   /** Supertype of incoming commands from the client. */
   type Cmd
 
@@ -48,26 +48,29 @@ trait CommandAndPushWebSocketHandler {
 
   implicit def ec: ExecutionContextExecutor
 
-  // Configuration
-  def pushMessageBufferSize: Int
-  def pushMessageOverflowStrategy: OverflowStrategy
-  val pushMessageSource: PushMessageSource[Push]
+  val pushMessageSource: CommandAndPushWebSocketHandler.PushMessageSource[Push]
+
+  case class ConnectionControl(
+    pushMessageSource: self.pushMessageSource.type,
+    shutdown: () => Unit,
+    crash: Throwable => Unit
+  )
 
   def getState(): Future[Sess]
   def setState(state: Sess): Future[Unit]
   def deserialize(command: Message): Future[Cmd]
   def processCommand(command: Cmd, state: Sess): Future[Res]
-  def processAction(action: Action, state: Sess, connectionControl: CommandAndPushWebSocketHandler.ConnectionControl): Future[(Option[Out], Sess)]
+  def processAction(action: Action, state: Sess, connectionControl: ConnectionControl): Future[(Option[Out], Sess)]
   def serialize(output: Out): Future[Message]
 
   // Internal state. This is a constant, practically speaking, because it 
   // will be set when the Flow is materialized, and then never be mutated.
   private var killSwitch: KillSwitch = null
 
-  final private def connectionControl = CommandAndPushWebSocketHandler.ConnectionControl(
-    pushMessageSource = pushMessageSource,
-    shutdownConnection = () => killSwitch.shutdown(),
-    abortConnection = () => killSwitch.abort()
+  final private lazy val connectionControl = ConnectionControl(
+    pushMessageSource = self.pushMessageSource,
+    shutdown = () => killSwitch.shutdown(),
+    crash = (ex: Throwable) => killSwitch.abort(ex)
   )
 
   final private def withState[A](a: A): Future[(A, Sess)] = getState.map { state => 
@@ -95,14 +98,14 @@ trait CommandAndPushWebSocketHandler {
           ()
         }
     )
-    `.concat(Source.single(Ending).mapAsync(1)(withState))`
+    .concat(Source.single(Ending).mapAsync(1)(withState))
     .mapAsync(1) { case (action, state) =>
       for {
         (output, newState) <- processAction(action, state, connectionControl)
         _ <- if (newState != state) {
             setState(newState)
           } else {
-            Future.succssful(())
+            Future.successful(())
           }
       } yield output
     }
@@ -111,21 +114,15 @@ trait CommandAndPushWebSocketHandler {
 }
 
 object CommandAndPushWebSocketHandler {
-  case class ConnectionControl[Push, PushMessageSource[_]](
-    pushMessageSource: PushMessageSource[Push],
-    shutdownConnection: () => Unit,
-    abortConnection: () => Unit
-  )
-
   trait PushMessageSource[Push] {
-    val source: Source[Push]
+    val source: Source[Push, _]
   }
 
   case class ActorPushMessageSource[Push](
     pushMessageBufferSize: Int, 
     pushMessageOverflowStrategy: OverflowStrategy
   ) extends PushMessageSource[Push] {
-      var actorRef: ActorRef
+      var actorRef: ActorRef = null
       val source = Source
         .actorRef[Push](pushMessageBufferSize, pushMessageOverflowStrategy)
         .mapMaterializedValue { r =>
@@ -138,7 +135,7 @@ object CommandAndPushWebSocketHandler {
     pushMessageBufferSize: Int, 
     pushMessageOverflowStrategy: OverflowStrategy
   ) extends PushMessageSource[Push] {
-      var pushMessageQueue: SourceQueue
+      var pushMessageQueue: SourceQueue[Push] = null
       val source = Source
         .queue[Push](pushMessageBufferSize, pushMessageOverflowStrategy)
         .mapMaterializedValue { queue =>
@@ -149,7 +146,7 @@ object CommandAndPushWebSocketHandler {
 
   class TextMesageDeserializationException extends Exception("This socket only accepts text messages.")
 
-  def textMessageToString(message: Message): Future[String] = {
+  def textMessageToString(message: Message)(implicit mat: ActorMaterializer): Future[String] = {
     message match {
       case m: TextMessage =>
         m.textStream
@@ -157,6 +154,12 @@ object CommandAndPushWebSocketHandler {
           .runFold("")(_ ++ _)
       case _: BinaryMessage =>
         Future.failed(new TextMesageDeserializationException)
- 
-  }  
+    }
+  } 
+
+  trait AtomicReferenceState[Sess] {
+    val s = new AtomicReference(ConnectionState(user = None))
+    def getState(): Future[ConnectionState] = Future.successful(s.get())
+    def setState(newState: ConnectionState) = Future.successful(s.set(newState))
+  }
 }

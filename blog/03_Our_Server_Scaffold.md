@@ -4,11 +4,11 @@ Alright, now let's build something. As mentioned in the last piece:
 
 > I'm going to zoom in on a common category of use cases of WebSockets, instead of the full generality. Often, WebSockets are used to model a combination of the client command -> server response paradigm with push messages from a server. They also often have implicit or explict state over the life of the connection. This could include protocol state, like authentication status, or application state, like mutable connection options. HTTP has evolved mechanisms and patterns for all of these things, through features like headers, cookies, and server-sent events (SSE). WebSocket doesn't standardize these protocol concerns in any way, so you have to build this yourself. We'll walk through my attempt to build a basic framework for a "command and push" WebSocket server, and use it to power a chat app.
 
-So, we've got to pack all of these protocol concerns into the `Flow[Message, Message, NotUsed]` expected by Akka HTTP _and_ still actually implement business logic. And as great as Akka Streams is, one thing we _don't_ want is to have to express our business logic using Akka Streams primitives. So we're going to need some sort of layered architecture.
+So, we've got to pack all of these protocol concerns into the `Flow[Message, Message, NotUsed]` expected by Akka HTTP _and_ still actually implement business logic. This is exactly like saying, "implement an entire HTTP service in the form of a single function from all possible request objects to response objects. This `Flow` we need to produce has to pack a lot of functionality in one object, and it will get very unwieldy if we're not clever in how we design it. As great as Akka Streams is, one thing we _don't_ want is to have to express our business logic using Akka Streams primitives. We're going to need some sort of layered architecture.
 
 Sounds tricky, right? It's tricky enough that I never figured it out at my last job. But I think that starting from scratch and knowing what I know, I can pull it off and walk you through it.
 
-At a high level, what we're going to do is break this down into layers. We want something that looks kind of like:
+At a high level, we want something that looks kind of like:
 
 ```
 Transport-agnostic business logic
@@ -17,19 +17,17 @@ Transport-agnostic business logic
 -> Akka HTTP
 ```
 
-Akka HTTP already exists, so we're already 25% of the way there. Our goal main goal at this stage is to write a scaffold that allows our WebSocket protocol to be specified _without_ having to build the application-specific aspects of that protocol directly in Akka Streams.
+Well, Akka HTTP already exists, so we're already 25% of the way there. On to the next layer!
+
+Our goal main goal now is to write a scaffold that allows our WebSocket protocol to be specified _without_ having to build the application-specific aspects of that protocol directly in Akka Streams.
 
 _Why bother?_ You ask.
 
-Well, as nice is Akka Streams is, it is very nuanced. As developers, we are accustomed to writing server logic in the form of ordinary methods and functions, not streams. This will make our protocol itself much easier to work on. It will be testable independently from the underlying Akka framework. If we decide we want to use Play's WebSockets instead of Akka HTTP's, or just benchmark different solutions, we can write different adapters.
-
-Some of this is arguably [YAGNI](https://en.wikipedia.org/wiki/You_aren%27t_gonna_need_it). Maybe we'll never migrate our app. Still, breaking a system down into simple, cohesive, composable parts is almost always a win in my experience.
+Well, as nice is Akka Streams is, it is very nuanced. As developers, we are accustomed to writing server logic in the form of ordinary methods and functions, not streams. The protocol itself will likewise be easier to work on if the details don't have to be specified using streams. Breaking a system down into simple, cohesive, composable parts is almost always a win in my experience.
 
 ## Separate the transport logic from the business logic
 
-In general, as a developer I try to express my business logic in the form of _async functions over domain-specific data structures_. I'll inject data access objects for communication with the outside world, but the business logic itself won't directly couple to libaries or data stores.
-
-Applying this principle to a WebSocket server, I don't want my business logi dealing with `Flow`s, or any other complex library structures. That's going to be much more difficult to reason about and test. This means I need to write an adapter from Akka HTTP's `Flow`-based API to something I can plug my simple business logic functions into.
+In general, as a developer I try to express my business logic in the form of _async functions over domain-specific data structures_. I'll inject data access objects for communication with the outside world, but the business logic itself won't couple direclty to libaries or data stores.
 
 For this project, I have created an adapter called `CommandAndPushWebSocketHandler`. It builds a scaffold for the sort of WebSocket connection handler I suspect many people need in their real-time apps. It supports:
 

@@ -19,6 +19,7 @@ case class ChatWebSocket(
   mat: ActorMaterializer,
   val ec: ExecutionContextExecutor
 ) extends CommandAndPushWebSocketHandler {
+  import CommandAndPushWebSocketHandler._
   import ChatWebSocket._
   import ChatService._
   import UserService._
@@ -37,10 +38,7 @@ case class ChatWebSocket(
 
   def deserialize(request: Message): Future[ChatWebSocket.ClientCommand] = {
     CommandAndPushWebSocketHandler.textMessageToString(request)
-      .map { text => 
-        ClientCommand.fromString(text)
-          .getOrElse(ErroneousCommand(text))
-      }
+      .map(ClientCommand.fromString)
   }
 
   def processCommand(command: ClientCommand, state: Sess): Future[ClientCommandResult] = state match {
@@ -89,8 +87,8 @@ case class ChatWebSocket(
   def processAction(
     action: Action, 
     state: Sess, 
-    connectionControl: CommandAndPushWebSocketHandler.ConnectionControl
-  ): Future[(Out, Sess)] = action match {
+    connectionControl: ConnectionControl
+  ): Future[(Option[Out], Sess)] = action match {
     case Starting =>
       Future.successful((Some(LoginChallenge), state))
 
@@ -102,7 +100,7 @@ case class ChatWebSocket(
       Future.successful((Some(Error(reason)), state))
 
     case Responding(Disconnect) =>
-      connectionControl.killSwitch.shutdown()
+      connectionControl.shutdown()
       Future.successful((Some(Goodbye), state))
 
     case Telling(s: SomeoneJoinedRoom) if state.user.contains(s.person) =>
@@ -116,11 +114,11 @@ case class ChatWebSocket(
 
     case Ending =>
       state.user.foreach(unsubscribeForEvents)
-      Future.successful(None, state))
+      Future.successful((None, state))
   }
 
-  def serialize(output: ClientUpdate): Future[Option[Message]] = {
-    Future.successful(ClientUpdate.asString(output).map(TextMessage(_)))
+  def serialize(output: ClientUpdate): Future[Message] = {
+    Future.successful(TextMessage(ClientUpdate.asString(output)))
   }
 }
 
@@ -163,7 +161,7 @@ object ChatWebSocket {
 
   object ClientCommand {
     def fromString(str: String): ClientCommand = str match {
-      case LogIn.r(username, password) => LogIn(username, password))
+      case LogIn.r(username, password) => LogIn(username, password)
       case LogOut.r() => LogOut
       case JoinRoom.r(roomName) => JoinRoom(roomName)
       case LeaveRoom.r(roomName) => LeaveRoom(roomName)
