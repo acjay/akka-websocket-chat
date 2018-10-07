@@ -1,3 +1,8 @@
+# Full file template
+
+Here is the full template for `CommandAndPushWebSocketHandler`. The blog posts fill in the details during their discussion of the code.
+
+```scala src/main/scala/com/acjay/lib/CommandAndPushWebSocketHandler.scala
 package com.acjay.lib
 
 import akka.actor.ActorRef
@@ -77,40 +82,7 @@ trait CommandAndPushWebSocketHandler { self =>
     (a, state)
   }
 
-  final val handler: Flow[Message, Message, _] = Flow[Message]
-    .mapAsync(1)(deserialize)
-    .mapAsync(1) { command =>
-      for {
-        state <- getState()
-        commandResult <- processCommand(command, state) 
-      } yield (Responding(commandResult), state)
-    }
-    .merge(
-      pushMessageSource.source
-        .map(Telling(_))
-        .mapAsync(1)(withState)
-    )
-    .prepend(Source.single(Starting).mapAsync(1)(withState))
-    .via(
-      Flow.fromGraph(KillSwitches.single[(Action, Sess)])
-        .mapMaterializedValue { k =>
-          killSwitch = k
-          ()
-        }
-    )
-    .concat(Source.single(Ending).mapAsync(1)(withState))
-    .mapAsync(1) { case (action, state) =>
-      for {
-        (output, newState) <- processAction(action, state, connectionControl)
-        _ <- if (newState != state) {
-            setState(newState)
-          } else {
-            Future.successful(())
-          }
-      } yield output
-    }
-    .mapConcat(_.toList)
-    .mapAsync(1)(serialize)
+  <<<handler>>>
 }
 
 object CommandAndPushWebSocketHandler {
@@ -163,3 +135,4 @@ object CommandAndPushWebSocketHandler {
     def setState(newState: ConnectionState) = Future.successful(s.set(newState))
   }
 }
+```

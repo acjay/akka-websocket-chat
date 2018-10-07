@@ -1,3 +1,4 @@
+go/
 project/target/
 target/
 ensime-langserver.log

@@ -1,5 +1,6 @@
 {
   "files.exclude": {
+    "go/": "explorerExcludedFiles",
     "project/target/": "explorerExcludedFiles",
     "target/": "explorerExcludedFiles",
     "ensime-langserver.log": "explorerExcludedFiles",
