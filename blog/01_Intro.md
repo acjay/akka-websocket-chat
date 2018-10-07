@@ -23,3 +23,5 @@ To meet these objectives, this project implements an IRC-like chat service. This
 ## Literate programming
 
 Because much of this blog discusses source code, I'm using a technique called [literate programming](https://en.wikipedia.org/wiki/Literate_programming). Basically, if I make references to the code in my posts, it wil be difficult to keep everything in sync. Instead, the blog posts themselves are the source of truth for the code. I'm using wonderful tool called [lmt](https://github.com/driusan/lmt) to generate the source code from the embedded snippets. See [build.sbt](build.sbt) for how this is wired up.
+
+It is possible to use [SBT's managed sources concept](https://www.scala-sbt.org/1.x/docs/Classpaths.html#Unmanaged+vs+managed) to have the generated source code be excluded from version control, but I prefer to have them reified in the repo, so that it's possible to explore the integrated source without having to build the project.
